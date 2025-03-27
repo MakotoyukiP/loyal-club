@@ -1,0 +1,278 @@
+<?php
+session_start();
+require 'db_config.php';
+
+// ตรวจสอบการล็อกอิน ถ้าไม่ได้ล็อกอินให้กลับไปหน้า login
+if (!isset($_SESSION['user_id'])) {
+    header("Location: login.php");
+    exit();
+}
+
+// ฟังก์ชันตรวจสอบหมายเลขสมาชิก
+function validateMemberNumber($memberNumber) {
+    return preg_match('/^1-\d{11}$/', $memberNumber) || preg_match('/^9-\d{9}$/', $memberNumber);
+}
+
+// ฟังก์ชันสร้าง CSRF Token
+function generateCsrfToken() {
+    if (!isset($_SESSION['csrf_token'])) {
+        $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
+    }
+    return $_SESSION['csrf_token'];
+}
+
+$error = '';
+$success = '';
+$member_exists = false;
+$member_data = null;
+$verification_code = substr(str_shuffle("0123456789"), 0, 6);
+$csrf_token = generateCsrfToken();
+
+// ตรวจสอบการส่งฟอร์มลงทะเบียน
+if ($_SERVER['REQUEST_METHOD'] == 'POST') {
+    if (!verifyCsrfToken($_POST['csrf_token'])) {
+        $error = "การยืนยันความปลอดภัยล้มเหลว";
+    } else {
+        $member_number = $_POST['member_number'] ?? '';
+        $first_name = $_POST['first_name'] ?? '';
+        $ps_name = $_POST['ps_name'] ?? '';
+        $ps_location = $_POST['ps_location'] ?? '';
+        $ps_call = $_POST['ps_call'] ?? '';
+        
+        if (!validateMemberNumber($member_number)) {
+            $error = "รูปแบบหมายเลขสมาชิกไม่ถูกต้อง";
+        } else {
+            try {
+                // ตรวจสอบว่าสมาชิกมีอยู่แล้วหรือไม่
+                $stmt = $pdo->prepare("SELECT * FROM members WHERE member_number = ?");
+                $stmt->execute([$member_number]);
+                
+                if ($stmt->fetch()) {
+                    $error = "หมายเลขสมาชิกนี้มีการลงทะเบียนเรียบร้อยแล้ว";
+                    $member_exists = true;
+                } else {
+                    // เพิ่มสมาชิกใหม่
+                    $insertStmt = $pdo->prepare("INSERT INTO members (member_number, first_name, ps_name, ps_location, ps_call, verification_code, verified) VALUES (?, ?, ?, ?, ?, ?, 1)");
+                    $insertStmt->execute([$member_number, $first_name, $ps_name, $ps_location, $ps_call, $verification_code]);
+                    
+                    $success = "ลงทะเบียนสำเร็จสำหรับหมายเลขสมาชิก: " . htmlspecialchars($member_number);
+                    $member_exists = true;
+                }
+            } catch (PDOException $e) {
+                $error = "เกิดข้อผิดพลาดในการลงทะเบียน";
+            }
+        }
+    }
+}
+?>
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ลงทะเบียนสมาชิก - Loyal Club</title>
+    <link href="https://fonts.googleapis.com/css2?family=Prompt:wght@300;400;500;600&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        :root {
+            --primary-color: #4e73df;
+            --secondary-color: #1cc88a;
+            --danger-color: #e74a3b;
+            --dark-color: #5a5c69;
+            --light-color: #f8f9fc;
+        }
+        
+        body {
+            font-family: 'Prompt', sans-serif;
+            background-color: #f5f7fb;
+            color: var(--dark-color);
+        }
+        
+        .header-container {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 20px 0;
+            margin-bottom: 30px;
+        }
+        
+        .logo-section {
+            display: flex;
+            align-items: center;
+        }
+        
+        .logout-btn {
+            background-color: var(--danger-color);
+            color: white;
+            border: none;
+            border-radius: 8px;
+            padding: 10px 20px;
+            font-weight: 500;
+            text-decoration: none;
+            display: flex;
+            align-items: center;
+        }
+        
+        .logout-btn:hover {
+            background-color: #c82333;
+            color: white;
+        }
+        
+        .card {
+            border: none;
+            border-radius: 15px;
+            box-shadow: 0 0.15rem 1.75rem 0 rgba(58, 59, 69, 0.15);
+            margin-bottom: 30px;
+        }
+        
+        .card-header {
+            background: linear-gradient(135deg, var(--primary-color), #224abe);
+            color: white;
+            border-radius: 15px 15px 0 0 !important;
+            padding: 1.5rem;
+            text-align: center;
+        }
+        
+        .form-control {
+            border-radius: 10px;
+            padding: 12px 15px;
+            height: 50px;
+            margin-bottom: 15px;
+        }
+        
+        .btn-primary {
+            background-color: var(--primary-color);
+            border: none;
+            border-radius: 10px;
+            padding: 12px;
+            height: 50px;
+            font-weight: 500;
+            width: 100%;
+        }
+        
+        .verification-code {
+            font-size: 24px;
+            letter-spacing: 5px;
+            background-color: #f8f9fc;
+            padding: 15px;
+            border-radius: 10px;
+            text-align: center;
+            margin: 15px 0;
+            cursor: pointer;
+            border: 1px dashed #d1d3e2;
+        }
+        
+        .example-box {
+            background-color: #f8f9fa;
+            border-left: 4px solid var(--primary-color);
+            padding: 15px;
+            margin-bottom: 20px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header-container">
+            <div class="logo-section">
+                <img src="images/logo.png" alt="Loyal Club Logo" style="height: 50px; margin-right: 15px;">
+                <div>
+                    <h4 class="mb-0">ระบบลงทะเบียนสมาชิก</h4>
+                    <small class="text-muted">ยินดีต้อนรับ, <?php echo htmlspecialchars($_SESSION['username']); ?></small>
+                </div>
+            </div>
+            <a href="logout.php" class="logout-btn">
+                <i class="fas fa-sign-out-alt me-2"></i>ออกจากระบบ
+            </a>
+        </div>
+        
+        <?php if ($error): ?>
+            <div class="alert alert-danger mb-4">
+                <i class="fas fa-exclamation-circle me-2"></i><?php echo $error; ?>
+            </div>
+        <?php endif; ?>
+        
+        <?php if ($success): ?>
+            <div class="alert alert-success mb-4">
+                <i class="fas fa-check-circle me-2"></i><?php echo $success; ?>
+            </div>
+        <?php endif; ?>
+        
+        <div class="card">
+            <div class="card-header">
+                <h4 class="mb-0"><i class="fas fa-user-plus me-2"></i>ลงทะเบียนสมาชิกใหม่</h4>
+            </div>
+            <div class="card-body">
+                <form method="post">
+                    <input type="hidden" name="csrf_token" value="<?php echo $csrf_token; ?>">
+                    
+                    <div class="mb-3">
+                        <label class="form-label"><i class="fas fa-id-card me-1"></i>หมายเลขสมาชิก (MID)</label>
+                        <input type="text" name="member_number" class="form-control" 
+                               placeholder="เช่น 1-21000000006 หรือ 9-001110002" required>
+                        <div class="example-box mt-2">
+                            <h6><i class="fas fa-info-circle me-2"></i>ตัวอย่างรูปแบบหมายเลขสมาชิก</h6>
+                            <ul class="mb-0">
+                                <li><code>1-21000000006</code> (รูปแบบที่ 1)</li>
+                                <li><code>9-001110002</code> (รูปแบบที่ 2)</li>
+                            </ul>
+                        </div>
+                    </div>
+                    
+                    <div class="mb-3">
+                        <label class="form-label"><i class="fas fa-signature me-1"></i>ชื่อลูกค้า</label>
+                        <input type="text" name="first_name" class="form-control" required>
+                    </div>
+                    
+                    <div class="mb-3">
+                        <label class="form-label"><i class="fas fa-store me-1"></i>PS Name</label>
+                        <input type="text" name="ps_name" class="form-control" required>
+                    </div>
+                    
+                    <div class="mb-3">
+                        <label class="form-label"><i class="fas fa-map-marker-alt me-1"></i>PS Location</label>
+                        <input type="text" name="ps_location" class="form-control" required>
+                    </div>
+                    
+                    <div class="mb-3">
+                        <label class="form-label"><i class="fas fa-phone-alt me-1"></i>PS Call</label>
+                        <input type="text" name="ps_call" class="form-control" required>
+                    </div>
+                    
+                    <div class="mb-4">
+                        <label class="form-label"><i class="fas fa-shield-alt me-1"></i>รหัสยืนยัน</label>
+                        <div class="verification-code" onclick="navigator.clipboard.writeText('<?php echo $verification_code; ?>')">
+                            <?php echo $verification_code; ?>
+                        </div>
+                        <small class="text-muted">คลิกที่รหัสเพื่อคัดลอก</small>
+                    </div>
+                    
+                    <button type="submit" class="btn btn-primary">
+                        <i class="fas fa-user-check me-2"></i>ลงทะเบียนสมาชิก
+                    </button>
+                </form>
+            </div>
+        </div>
+        
+        <div class="text-center text-muted small">
+            <p>© <?php echo date('Y'); ?> Loyal Club. All rights reserved.</p>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        // ตรวจสอบหมายเลขสมาชิกแบบ real-time
+        document.querySelector('input[name="member_number"]')?.addEventListener('input', function() {
+            const value = this.value.trim();
+            if (value === '') {
+                this.classList.remove('is-invalid', 'is-valid');
+                return;
+            }
+            
+            const isValid = /^1-\d{11}$/.test(value) || /^9-\d{9}$/.test(value);
+            this.classList.toggle('is-invalid', !isValid);
+            this.classList.toggle('is-valid', isValid);
+        });
+    </script>
+</body>
+</html>
